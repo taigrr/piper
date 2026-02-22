@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 )
@@ -37,18 +36,19 @@ func (l *Listener) Listen(ctx context.Context) error {
 
 	l.nc, err = connect(l.Credentials, l.Servers)
 	if err != nil {
-		return fmt.Errorf("could not connect to NATS: %s", err)
+		return fmt.Errorf("could not connect to NATS: %w", err)
 	}
 	defer l.close()
 
 	if async {
-		if !hasJS(l.nc, 2*time.Second) {
-			return fmt.Errorf("asynchronous operation required JetStream")
+		js, jsErr := l.nc.JetStream()
+		if jsErr != nil {
+			return fmt.Errorf("could not get JetStream context: %w", jsErr)
 		}
 
-		err = createObservable(l.Name, 2*time.Second, l.nc)
+		err = createConsumer(l.Name, js)
 		if err != nil {
-			return fmt.Errorf("could not set up observable: %s", err)
+			return fmt.Errorf("could not set up consumer: %w", err)
 		}
 	}
 
@@ -56,12 +56,27 @@ func (l *Listener) Listen(ctx context.Context) error {
 	case async:
 		log.Debugf("Fetching 1 message from JetStream")
 		go func() {
-			res, err := l.nc.Request(server.JetStreamRequestNextPre+".PIPER."+l.Name, []byte("1"), 8760*time.Hour)
-
-			if err != nil {
-				l.errc <- fmt.Errorf("async request failed: %s", err)
+			js, jsErr := l.nc.JetStream()
+			if jsErr != nil {
+				l.errc <- fmt.Errorf("could not get JetStream context: %w", jsErr)
+				return
 			}
-			l.ibHandler(res)
+
+			sub, subErr := js.PullSubscribe(asyncName(l.Name), l.Name)
+			if subErr != nil {
+				l.errc <- fmt.Errorf("could not subscribe: %w", subErr)
+				return
+			}
+
+			msgs, fetchErr := sub.Fetch(1, nats.MaxWait(8760*time.Hour))
+			if fetchErr != nil {
+				l.errc <- fmt.Errorf("async fetch failed: %w", fetchErr)
+				return
+			}
+
+			if len(msgs) > 0 {
+				l.jsHandler(msgs[0])
+			}
 		}()
 
 	case l.Group:
@@ -96,22 +111,39 @@ func (l *Listener) close() {
 }
 
 func (l *Listener) ibHandler(m *nats.Msg) {
-	if !async {
-		err := m.Sub.Unsubscribe()
-		if err != nil {
-			log.Warnf("Could not unsubscribe from data subject: %s", err)
-		}
+	err := m.Sub.Unsubscribe()
+	if err != nil {
+		log.Warnf("Could not unsubscribe from data subject: %s", err)
 	}
 
-	err := m.Respond([]byte{})
+	err = m.Respond([]byte{})
 	if err != nil {
-		l.errc <- fmt.Errorf("acknowledgement failed: %s", err)
+		l.errc <- fmt.Errorf("acknowledgement failed: %w", err)
 		return
 	}
 
 	body, err := decompress(m.Data)
 	if err != nil {
-		l.errc <- fmt.Errorf("decompression failed: %s", err)
+		l.errc <- fmt.Errorf("decompression failed: %w", err)
+		return
+	}
+
+	fmt.Print(body)
+
+	l.errc <- nil
+}
+
+func (l *Listener) jsHandler(m *nats.Msg) {
+	err := m.Ack()
+	if err != nil {
+		l.errc <- fmt.Errorf("acknowledgement failed: %w", err)
+		return
+	}
+
+	body, err := decompress(m.Data)
+	if err != nil {
+		l.errc <- fmt.Errorf("decompression failed: %w", err)
+		return
 	}
 
 	fmt.Print(body)

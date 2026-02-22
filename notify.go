@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -52,17 +51,18 @@ func (n *Notifier) Notify(ctx context.Context) error {
 
 	nc, err := connect(n.Credentials, n.Servers)
 	if err != nil {
-		return fmt.Errorf("could not connect to NATS: %s", err)
+		return fmt.Errorf("could not connect to NATS: %w", err)
 	}
 
 	if async {
-		if !hasJS(nc, n.Timeout) {
-			return fmt.Errorf("JetStream is not enabled, cannot operate asynchronously")
+		js, jsErr := nc.JetStream()
+		if jsErr != nil {
+			return fmt.Errorf("could not get JetStream context: %w", jsErr)
 		}
 
-		err = n.createObservable(nc)
+		err = createConsumer(n.Name, js)
 		if err != nil {
-			return fmt.Errorf("could not create JetStream Observable: %s", err)
+			return fmt.Errorf("could not create JetStream Consumer: %w", err)
 		}
 	}
 
@@ -71,14 +71,14 @@ func (n *Notifier) Notify(ctx context.Context) error {
 		text := make([]byte, reader.Size())
 		_, err = reader.Read(text)
 		if err != nil {
-			return fmt.Errorf("could not read STDIN: %s", err)
+			return fmt.Errorf("could not read STDIN: %w", err)
 		}
 		n.Message = string(text)
 	}
 
 	compressed, err := compress(n.Message)
 	if err != nil {
-		return fmt.Errorf("compression failed: %s", err)
+		return fmt.Errorf("compression failed: %w", err)
 	}
 
 	for {
@@ -102,8 +102,4 @@ func (n *Notifier) Notify(ctx context.Context) error {
 			return fmt.Errorf("timeout after %v", n.Timeout)
 		}
 	}
-}
-
-func (n *Notifier) createObservable(nc *nats.Conn) error {
-	return createObservable(n.Name, n.Timeout, nc)
 }

@@ -3,19 +3,14 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"strings"
+	"io"
+	"os"
 	"time"
 
-	"github.com/mitchellh/go-homedir"
-	"github.com/nats-io/nats-server/v2/server"
 	nats "github.com/nats-io/nats.go"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
-
-	"os"
 )
 
 func connect(credentials string, servers string) (*nats.Conn, error) {
@@ -55,8 +50,9 @@ func connect(credentials string, servers string) (*nats.Conn, error) {
 	if credentials != "" {
 		opts = append(opts, nats.UserCredentials(credentials))
 	} else {
-		pcreds, err := homedir.Expand("~/.piper.creds")
+		home, err := os.UserHomeDir()
 		if err == nil {
+			pcreds := home + "/.piper.creds"
 			if fileExist(pcreds) {
 				log.Debugf("Using credentials in %s", pcreds)
 				opts = append(opts, nats.UserCredentials(pcreds))
@@ -86,7 +82,7 @@ func decompress(data []byte) (string, error) {
 		return "", err
 	}
 
-	d, err := ioutil.ReadAll(zr)
+	d, err := io.ReadAll(zr)
 	if err != nil {
 		return "", err
 	}
@@ -117,93 +113,45 @@ func compress(data string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func hasJS(nc *nats.Conn, timeout time.Duration) bool {
-	res, err := nc.Request(server.JetStreamEnabled, nil, timeout)
-
-	return err == nil && strings.HasPrefix(string(res.Data), server.OK)
-}
-
-func createMessageSet(timeout time.Duration, nc *nats.Conn) error {
-	res, err := nc.Request(server.JetStreamMsgSetInfo, []byte("PIPER"), timeout)
-	if err != nil {
-		return err
+func createStream(js nats.JetStreamContext) error {
+	_, err := js.StreamInfo("PIPER")
+	if err == nil {
+		return nil // stream already exists
 	}
 
-	if strings.HasPrefix(string(res.Data), "}") {
-		return nil
-	}
-
-	cfg := server.MsgSetConfig{
+	_, err = js.AddStream(&nats.StreamConfig{
 		Name:      "PIPER",
 		Subjects:  []string{"piper.ASYNC.>"},
-		Retention: server.WorkQueuePolicy,
+		Retention: nats.WorkQueuePolicy,
 		MaxAge:    24 * 7 * time.Hour,
-		Storage:   server.FileStorage,
-	}
-
-	j, err := json.Marshal(&cfg)
+		Storage:   nats.FileStorage,
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("could not create stream: %w", err)
 	}
 
-	res, err = nc.Request(server.JetStreamCreateMsgSet, j, timeout)
-	if err != nil {
-		return err
-	}
-
-	if strings.HasPrefix(string(res.Data), server.OK) {
-		return nil
-	}
-
-	return fmt.Errorf("%s", string(res.Data))
+	return nil
 }
 
-func createObservable(name string, timeout time.Duration, nc *nats.Conn) error {
-	res, err := nc.Request(server.JetStreamObservables, []byte("PIPER"), timeout)
-	if err != nil {
-		return err
-	}
-
-	list := []string{}
-	err = json.Unmarshal(res.Data, &list)
-	if err != nil {
-		return err
-	}
-
-	for _, o := range list {
-		if o == name {
-			log.Debugf("Observable %s already exist, no need to create", name)
-			return nil
-		}
-	}
-
-	cfg := server.CreateObservableRequest{
-		MsgSet: "PIPER",
-		Config: server.ObservableConfig{
-			Delivery:      "",
-			Durable:       name,
-			DeliverAll:    true,
-			AckPolicy:     server.AckExplicit,
-			AckWait:       30 * time.Second,
-			FilterSubject: asyncName(name),
-		},
-	}
-
-	j, err := json.Marshal(&cfg)
-	if err != nil {
-		return err
-	}
-
-	res, err = nc.Request(server.JetStreamCreateObservable, j, timeout)
-	if err != nil {
-		return err
-	}
-
-	if strings.HasPrefix(string(res.Data), server.OK) {
+func createConsumer(name string, js nats.JetStreamContext) error {
+	_, err := js.ConsumerInfo("PIPER", name)
+	if err == nil {
+		log.Debugf("Consumer %s already exists, no need to create", name)
 		return nil
 	}
 
-	return fmt.Errorf("%s", string(res.Data))
+	_, err = js.AddConsumer("PIPER", &nats.ConsumerConfig{
+		Durable:       name,
+		DeliverPolicy: nats.DeliverAllPolicy,
+		AckPolicy:     nats.AckExplicitPolicy,
+		AckWait:       30 * time.Second,
+		FilterSubject: asyncName(name),
+	})
+	if err != nil {
+		return fmt.Errorf("could not create consumer: %w", err)
+	}
+
+	return nil
 }
 
 func asyncName(s string) string {

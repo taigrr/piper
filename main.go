@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/alecthomas/kingpin/v2"
 	log "github.com/sirupsen/logrus"
-	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
 var (
@@ -92,12 +92,17 @@ func asyncSetup() error {
 	}
 	defer nc.Close()
 
-	err = createMessageSet(2*time.Second, nc)
+	js, err := nc.JetStream()
+	if err != nil {
+		return fmt.Errorf("could not get JetStream context: %w", err)
+	}
+
+	err = createStream(js)
 	if err != nil {
 		return err
 	}
 
-	log.Info("Created 'PIPER' Message Set")
+	log.Info("Created 'PIPER' Stream")
 
 	return nil
 }
