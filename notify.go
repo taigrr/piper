@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 )
 
+// Notifier publishes a message to a named pipe.
 type Notifier struct {
 	Name    string
 	Context string
@@ -19,23 +19,7 @@ type Notifier struct {
 	Timeout time.Duration
 }
 
-func NewNotifier() *Notifier {
-	var sub string
-	if async {
-		sub = asyncName(name)
-	} else {
-		sub = syncName(name)
-	}
-
-	return &Notifier{
-		Name:    name,
-		Context: nctx,
-		Message: notifierMessage,
-		Timeout: notifierTimeout,
-		Subject: sub,
-	}
-}
-
+// Notify connects to NATS and publishes the message.
 func (n *Notifier) Notify(ctx context.Context) error {
 	if n.Timeout == 0 && async {
 		n.Timeout = 2 * time.Second
@@ -45,46 +29,48 @@ func (n *Notifier) Notify(ctx context.Context) error {
 
 	log.Debugf("Publishing to %s with a timeout of %v", n.Subject, n.Timeout)
 
-	timeout, cancel := context.WithTimeout(ctx, n.Timeout)
+	tctx, cancel := context.WithTimeout(ctx, n.Timeout)
 	defer cancel()
 
 	nc, err := connect(n.Context)
 	if err != nil {
-		return fmt.Errorf("could not connect to NATS: %s", err)
+		return fmt.Errorf("could not connect to NATS: %w", err)
 	}
+	defer nc.Close()
 
 	if async {
-		if !hasJS(nc, n.Timeout) {
-			return fmt.Errorf("JetStream is not enabled, cannot operate asynchronously")
+		js, jsErr := nc.JetStream()
+		if jsErr != nil {
+			return fmt.Errorf("JetStream is not available: %w", jsErr)
 		}
 
-		err = n.createObservable(nc)
-		if err != nil {
-			return fmt.Errorf("could not create JetStream Observable: %s", err)
+		if err := createConsumer(n.Name, js); err != nil {
+			return fmt.Errorf("could not create JetStream consumer: %w", err)
 		}
 	}
 
 	if n.Message == "" {
 		reader := bufio.NewReader(os.Stdin)
 		text := make([]byte, reader.Size())
-		_, err = reader.Read(text)
+		nr, err := reader.Read(text)
 		if err != nil {
-			return fmt.Errorf("could not read STDIN: %s", err)
+			return fmt.Errorf("could not read STDIN: %w", err)
 		}
-		n.Message = string(text)
+		n.Message = string(text[:nr])
 	}
 
 	compressed, err := compress(n.Message)
 	if err != nil {
-		return fmt.Errorf("compression failed: %s", err)
+		return fmt.Errorf("compression failed: %w", err)
 	}
 
 	for {
-		attemptTimeout, attemptCancel := context.WithTimeout(timeout, 2*time.Second)
-		defer attemptCancel()
+		attemptCtx, attemptCancel := context.WithTimeout(tctx, 2*time.Second)
 
 		log.Debugf("Sending %d bytes of data compressed to %d on subject %s", len(n.Message), len(compressed), n.Subject)
-		_, err = nc.RequestWithContext(attemptTimeout, n.Subject, compressed)
+		_, err = nc.RequestWithContext(attemptCtx, n.Subject, compressed)
+		attemptCancel()
+
 		if err == nil {
 			return nil
 		}
@@ -95,13 +81,8 @@ func (n *Notifier) Notify(ctx context.Context) error {
 			continue
 		}
 
-		err = timeout.Err()
-		if err != nil {
+		if tctx.Err() != nil {
 			return fmt.Errorf("timeout after %v", n.Timeout)
 		}
 	}
-}
-
-func (n *Notifier) createObservable(nc *nats.Conn) error {
-	return createConsumer(n.Name, n.Timeout, nc)
 }

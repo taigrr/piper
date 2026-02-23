@@ -4,104 +4,143 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"runtime"
+	"os/signal"
 	rd "runtime/debug"
-	"time"
 
+	"github.com/charmbracelet/fang"
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/alecthomas/kingpin.v2"
+	"github.com/spf13/cobra"
 )
 
 var (
-	piper *kingpin.Application
+	debug   bool
+	async   bool
+	nctx    string
+	timeout string
 
-	debug bool
-	async bool
-	nctx  string
-
-	name string
-
-	notifier        *kingpin.CmdClause
-	notifierMessage string
-	notifierTimeout time.Duration
-
-	listener    *kingpin.CmdClause
-	listenGroup bool
+	version = "dev"
 )
 
 func main() {
-	piper = kingpin.New("piper", "Network pipes")
-	piper.Version(getVersion())
-
-	piper.Flag("context", "NATS context to use for connection").Envar("PIPER_CONTEXT").Default("piper").StringVar(&nctx)
-	piper.Flag("async", "Operates asynchronously using JetStream work queues").Envar("PIPER_ASYNC").Short('a').BoolVar(&async)
-	piper.Flag("timeout", "How long to wait for a listener to login before giving up").Envar("PIPER_TIMEOUT").DurationVar(&notifierTimeout)
-	piper.Flag("debug", "Enable debug logging").BoolVar(&debug)
-
-	listener = piper.Command("listen", "Listen for messages on the pipe")
-	listener.Arg("name", "Pipe name to wait on for a message").Required().StringVar(&name)
-	listener.Flag("group", "Listen on a group").BoolVar(&listenGroup)
-
-	notifier = piper.Command("notify", "Notifies listeners").Default()
-	notifier.Arg("name", "Pipe name to publish a message to").Required().StringVar(&name)
-	notifier.Arg("message", "The message to sent, reads STDIN otherwise").StringVar(&notifierMessage)
-
-	piper.Command("setup", "Creates JetStream configuration to enable asynchronous functionality")
-
-	command := kingpin.MustParse(piper.Parse(os.Args[1:]))
-	var err error
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	log.SetOutput(os.Stderr)
-	if debug {
-		log.SetLevel(log.DebugLevel)
+	rootCmd := &cobra.Command{
+		Use:   "piper",
+		Short: "Network pipes using NATS",
+		Long:  "Patchbay style distributed pipe using NATS.io. Supports synchronous request/reply and asynchronous JetStream work queues.",
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			log.SetOutput(os.Stderr)
+			if debug {
+				log.SetLevel(log.DebugLevel)
+			}
+		},
+		Version: getVersion(),
 	}
 
-	switch command {
-	case "listen":
-		err = NewListener().Listen(ctx)
+	rootCmd.PersistentFlags().StringVar(&nctx, "context", "piper", "NATS context to use for connection")
+	rootCmd.PersistentFlags().BoolVarP(&async, "async", "a", false, "Operate asynchronously using JetStream work queues")
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging")
+	rootCmd.PersistentFlags().StringVar(&timeout, "timeout", "", "How long to wait before giving up (e.g. 30s, 5m)")
 
-	case "notify":
-		err = NewNotifier().Notify(ctx)
+	listenCmd := &cobra.Command{
+		Use:   "listen <name>",
+		Short: "Listen for messages on the pipe",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runListen,
+	}
+	var listenGroup bool
+	listenCmd.Flags().BoolVar(&listenGroup, "group", false, "Listen on a work group")
 
-	case "setup":
-		err = asyncSetup()
-
-	default:
-		err = fmt.Errorf("invalid command %s", command)
+	notifyCmd := &cobra.Command{
+		Use:   "notify <name> [message]",
+		Short: "Notify listeners with a message",
+		Long:  "Publish a message to a named pipe. If no message argument is given, reads from STDIN.",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE:  runNotify,
 	}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to run: %v\n", err)
-		cancel()
-		runtime.Goexit()
+	setupCmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Create JetStream configuration for async mode",
+		RunE:  runSetup,
+	}
+
+	rootCmd.AddCommand(listenCmd, notifyCmd, setupCmd)
+
+	if err := fang.Execute(context.Background(), rootCmd); err != nil {
+		os.Exit(1)
 	}
 }
 
-func asyncSetup() error {
+func runListen(cmd *cobra.Command, args []string) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	group, _ := cmd.Flags().GetBool("group")
+
+	l := &Listener{
+		Name:     args[0],
+		Group:    group,
+		Context:  nctx,
+		DataSubj: "piper." + args[0],
+		errc:     make(chan error),
+	}
+
+	return l.Listen(ctx)
+}
+
+func runNotify(cmd *cobra.Command, args []string) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	var msg string
+	if len(args) > 1 {
+		msg = args[1]
+	}
+
+	var sub string
+	if async {
+		sub = asyncName(args[0])
+	} else {
+		sub = syncName(args[0])
+	}
+
+	n := &Notifier{
+		Name:    args[0],
+		Context: nctx,
+		Message: msg,
+		Timeout: parseDuration(timeout),
+		Subject: sub,
+	}
+
+	return n.Notify(ctx)
+}
+
+func runSetup(cmd *cobra.Command, args []string) error {
 	nc, err := connect(nctx)
 	if err != nil {
 		return err
 	}
 	defer nc.Close()
 
-	_, err = createStream(2*time.Second, nc)
+	js, err := nc.JetStream()
 	if err != nil {
+		return fmt.Errorf("could not get JetStream context: %w", err)
+	}
+
+	if err := createStream(js); err != nil {
 		return err
 	}
 
 	log.Info("Created 'PIPER' Stream")
-
 	return nil
 }
 
 func getVersion() string {
+	if version != "dev" {
+		return version
+	}
 	mods, ok := rd.ReadBuildInfo()
 	if !ok {
 		return "development"
 	}
-
 	return mods.Main.Version
 }

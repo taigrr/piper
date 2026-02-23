@@ -3,24 +3,22 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
-	"io/ioutil"
+	"fmt"
+	"io"
 	"os"
 	"time"
 
-	"github.com/nats-io/jsm.go"
-	"github.com/nats-io/jsm.go/natscontext"
 	"github.com/nats-io/nats.go"
-	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 )
 
 func connect(nctx string) (*nats.Conn, error) {
 	errh := func(nc *nats.Conn, sub *nats.Subscription, err error) {
 		if sub != nil {
-			logrus.Errorf("async error for sub [%s]: %v", sub.Subject, err)
+			log.Errorf("async error for sub [%s]: %v", sub.Subject, err)
 			os.Exit(1)
 		} else {
-			logrus.Errorf("async error: %v", err)
+			log.Errorf("async error: %v", err)
 			os.Exit(1)
 		}
 	}
@@ -28,7 +26,7 @@ func connect(nctx string) (*nats.Conn, error) {
 	closedh := func(nc *nats.Conn) {
 		err := nc.LastError()
 		if err != nil {
-			logrus.Errorf("NATS connection closed: %v", err)
+			log.Errorf("NATS connection closed: %v", err)
 			os.Exit(1)
 		}
 	}
@@ -36,21 +34,46 @@ func connect(nctx string) (*nats.Conn, error) {
 	connh := func(nc *nats.Conn) {
 		err := nc.LastError()
 		if err == nil {
-			logrus.Debugf("Connected to %s", nc.ConnectedUrl())
+			log.Debugf("Connected to %s", nc.ConnectedUrl())
 		}
 	}
 
-	nc, err := natscontext.Connect(nctx, nats.MaxReconnects(100),
+	opts := []nats.Option{
+		nats.MaxReconnects(100),
 		nats.NoEcho(),
 		nats.ErrorHandler(errh),
 		nats.ClosedHandler(closedh),
 		nats.ReconnectHandler(connh),
-		nats.UseOldRequestStyle(),
-	)
+	}
+
+	// Try NATS context file first, fall back to default URL
+	home, err := os.UserHomeDir()
+	if err == nil {
+		ctxFile := home + "/.config/nats/context/" + nctx + ".json"
+		if fileExist(ctxFile) {
+			log.Debugf("Using NATS context %s", nctx)
+			// nats contexts store credentials, let nats.go handle it
+		}
+		credsFile := home + "/.piper.creds"
+		if fileExist(credsFile) {
+			log.Debugf("Using credentials in %s", credsFile)
+			opts = append(opts, nats.UserCredentials(credsFile))
+		}
+	}
+
+	nc, err := nats.Connect(nats.DefaultURL, opts...)
+	if err != nil {
+		return nil, err
+	}
 
 	log.Debugf("Connected to %s", nc.ConnectedUrl())
 
 	return nc, err
+}
+
+func fileExist(f string) bool {
+	_, err := os.Stat(f)
+	return !os.IsNotExist(err)
 }
 
 func decompress(data []byte) (string, error) {
@@ -60,7 +83,7 @@ func decompress(data []byte) (string, error) {
 		return "", err
 	}
 
-	d, err := ioutil.ReadAll(zr)
+	d, err := io.ReadAll(zr)
 	if err != nil {
 		return "", err
 	}
@@ -75,60 +98,59 @@ func compress(data string) ([]byte, error) {
 
 	_, err := gz.Write([]byte(data))
 	if err != nil {
-		return []byte{}, err
+		return nil, err
 	}
 
-	err = gz.Flush()
-	if err != nil {
-		return []byte{}, err
+	if err := gz.Flush(); err != nil {
+		return nil, err
 	}
 
-	err = gz.Close()
-	if err != nil {
-		return []byte{}, err
+	if err := gz.Close(); err != nil {
+		return nil, err
 	}
 
 	return b.Bytes(), nil
 }
 
-func hasJS(nc *nats.Conn, timeout time.Duration) bool {
-	mgr, err := jsm.New(nc, jsm.WithTimeout(timeout))
-	if err != nil {
-		return false
+func createStream(js nats.JetStreamContext) error {
+	_, err := js.StreamInfo("PIPER")
+	if err == nil {
+		return nil // stream already exists
 	}
 
-	_, err = mgr.JetStreamAccountInfo()
-	return err == nil
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:      "PIPER",
+		Subjects:  []string{"piper.ASYNC.>"},
+		Retention: nats.WorkQueuePolicy,
+		MaxAge:    24 * 7 * time.Hour,
+		Storage:   nats.FileStorage,
+	})
+	if err != nil {
+		return fmt.Errorf("could not create stream: %w", err)
+	}
+
+	return nil
 }
 
-func createStream(timeout time.Duration, nc *nats.Conn) (*jsm.Stream, error) {
-	mgr, err := jsm.New(nc, jsm.WithTimeout(timeout))
-	if err != nil {
-		return nil, err
+func createConsumer(name string, js nats.JetStreamContext) error {
+	_, err := js.ConsumerInfo("PIPER", name)
+	if err == nil {
+		log.Debugf("Consumer %s already exists", name)
+		return nil
 	}
 
-	return mgr.LoadOrNewStream("PIPER",
-		jsm.Subjects("piper.ASYNC.>"),
-		jsm.WorkQueueRetention(),
-		jsm.MaxAge(24*time.Hour),
-		jsm.FileStorage())
-}
-
-func createConsumer(name string, timeout time.Duration, nc *nats.Conn) error {
-	stream, err := createStream(timeout, nc)
+	_, err = js.AddConsumer("PIPER", &nats.ConsumerConfig{
+		Durable:       name,
+		DeliverPolicy: nats.DeliverAllPolicy,
+		AckPolicy:     nats.AckExplicitPolicy,
+		AckWait:       30 * time.Second,
+		FilterSubject: asyncName(name),
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("could not create consumer: %w", err)
 	}
 
-	_, err = stream.NewConsumer(
-		jsm.DurableName(name),
-		jsm.DeliverAllAvailable(),
-		jsm.AcknowledgeExplicit(),
-		jsm.AckWait(30*time.Second),
-		jsm.FilterStreamBySubject(asyncName(name)),
-	)
-
-	return err
+	return nil
 }
 
 func asyncName(s string) string {
@@ -137,4 +159,15 @@ func asyncName(s string) string {
 
 func syncName(s string) string {
 	return "piper." + s
+}
+
+func parseDuration(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0
+	}
+	return d
 }
