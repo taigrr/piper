@@ -126,3 +126,106 @@ func TestGetVersion(t *testing.T) {
 		t.Error("getVersion() returned empty string")
 	}
 }
+
+func TestGetVersionCustom(t *testing.T) {
+	original := version
+	defer func() { version = original }()
+
+	version = "1.2.3"
+	v := getVersion()
+	if v != "1.2.3" {
+		t.Errorf("getVersion() = %q, want %q", v, "1.2.3")
+	}
+}
+
+func TestCompressLargePayload(t *testing.T) {
+	// Verify compression actually reduces size for compressible data
+	input := ""
+	for range 1000 {
+		input += "the quick brown fox jumps over the lazy dog "
+	}
+
+	compressed, err := compress(input)
+	if err != nil {
+		t.Fatalf("compress: unexpected error: %v", err)
+	}
+
+	if len(compressed) >= len(input) {
+		t.Errorf("compressed size (%d) should be smaller than input (%d)", len(compressed), len(input))
+	}
+
+	got, err := decompress(compressed)
+	if err != nil {
+		t.Fatalf("decompress: unexpected error: %v", err)
+	}
+
+	if got != input {
+		t.Error("roundtrip mismatch for large payload")
+	}
+}
+
+func TestDecompressTruncated(t *testing.T) {
+	// Compress valid data, then truncate
+	compressed, err := compress("hello world")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = decompress(compressed[:len(compressed)/2])
+	if err == nil {
+		t.Error("decompress(truncated): expected error, got nil")
+	}
+}
+
+func TestDecompressEmpty(t *testing.T) {
+	_, err := decompress([]byte{})
+	if err == nil {
+		t.Error("decompress(empty): expected error, got nil")
+	}
+}
+
+func TestFileExistDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if !fileExist(dir) {
+		t.Errorf("fileExist(%q): expected true for existing directory", dir)
+	}
+}
+
+func TestParseDurationEdgeCases(t *testing.T) {
+	tests := []struct {
+		input string
+		want  time.Duration
+	}{
+		{"0s", 0},
+		{"0m", 0},
+		{"24h", 24 * time.Hour},
+		{"1h1m1s", time.Hour + time.Minute + time.Second},
+		{"-5s", -5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		got := parseDuration(tt.input)
+		if got != tt.want {
+			t.Errorf("parseDuration(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestAsyncSyncNameConsistency(t *testing.T) {
+	// Async names should have ASYNC prefix, sync should not
+	name := "test-pipe"
+	asyncN := asyncName(name)
+	syncN := syncName(name)
+
+	if asyncN == syncN {
+		t.Error("async and sync names should differ")
+	}
+
+	if asyncN != "piper.ASYNC.test-pipe" {
+		t.Errorf("asyncName unexpected: %s", asyncN)
+	}
+
+	if syncN != "piper.test-pipe" {
+		t.Errorf("syncName unexpected: %s", syncN)
+	}
+}
