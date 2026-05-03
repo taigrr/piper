@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 func TestCompressDecompress(t *testing.T) {
@@ -208,6 +210,103 @@ func TestParseDurationEdgeCases(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("parseDuration(%q) = %v, want %v", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestLoadContextConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "piper.json")
+	content := `{
+		"url": "nats://demo.nats.io:4222",
+		"creds": "/tmp/piper.creds",
+		"user": "demo",
+		"password": "secret",
+		"token": "tok",
+		"nkey": "/tmp/piper.nk",
+		"cert": "/tmp/client.crt",
+		"key": "/tmp/client.key",
+		"ca": "/tmp/ca.pem"
+	}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadContextConfig(path)
+	if err != nil {
+		t.Fatalf("loadContextConfig() unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("loadContextConfig() returned nil config")
+	}
+	if cfg.URL != "nats://demo.nats.io:4222" || cfg.Creds != "/tmp/piper.creds" || cfg.User != "demo" || cfg.Password != "secret" || cfg.Token != "tok" || cfg.Nkey != "/tmp/piper.nk" || cfg.Cert != "/tmp/client.crt" || cfg.Key != "/tmp/client.key" || cfg.CA != "/tmp/ca.pem" {
+		t.Fatalf("loadContextConfig() returned unexpected config: %#v", cfg)
+	}
+}
+
+func TestLoadContextConfigMissing(t *testing.T) {
+	cfg, err := loadContextConfig(filepath.Join(t.TempDir(), "missing.json"))
+	if err != nil {
+		t.Fatalf("loadContextConfig() missing returned error: %v", err)
+	}
+	if cfg != nil {
+		t.Fatalf("loadContextConfig() missing = %#v, want nil", cfg)
+	}
+}
+
+func TestLoadContextConfigInvalid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "broken.json")
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadContextConfig(path)
+	if err == nil {
+		t.Fatal("loadContextConfig() expected error for invalid JSON")
+	}
+	if cfg != nil {
+		t.Fatalf("loadContextConfig() invalid = %#v, want nil", cfg)
+	}
+}
+
+func TestContextURL(t *testing.T) {
+	if got := contextURL(""); got != nats.DefaultURL {
+		t.Fatalf("contextURL(empty) = %q, want %q", got, nats.DefaultURL)
+	}
+	if got := contextURL("  nats://example:4222  "); got != "nats://example:4222" {
+		t.Fatalf("contextURL(trimmed) = %q", got)
+	}
+}
+
+func TestContextOptions(t *testing.T) {
+	cfg := &natsContextConfig{
+		Creds: "/tmp/piper.creds",
+		Token: "tok",
+		User:  "demo",
+		Cert:  "/tmp/client.crt",
+		Key:   "/tmp/client.key",
+		CA:    "/tmp/ca.pem",
+	}
+
+	opts, err := contextOptions(cfg)
+	if err != nil {
+		t.Fatalf("contextOptions() unexpected error: %v", err)
+	}
+	if len(opts) != 5 {
+		t.Fatalf("contextOptions() len = %d, want 5", len(opts))
+	}
+
+	nilOpts, err := contextOptions(nil)
+	if err != nil {
+		t.Fatalf("contextOptions(nil) unexpected error: %v", err)
+	}
+	if len(nilOpts) != 0 {
+		t.Fatalf("contextOptions(nil) len = %d, want 0", len(nilOpts))
+	}
+}
+
+func TestContextOptionsInvalidNkey(t *testing.T) {
+	_, err := contextOptions(&natsContextConfig{Nkey: filepath.Join(t.TempDir(), "missing.nk")})
+	if err == nil {
+		t.Fatal("contextOptions() expected error for invalid nkey seed")
 	}
 }
 
