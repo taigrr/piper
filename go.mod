@@ -1,10 +1,10 @@
 module github.com/taigrr/piper
 
-go 1.26.1
+go 1.26.2
 
 require (
 	github.com/charmbracelet/fang v1.0.0
-	github.com/nats-io/nats.go v1.50.0
+	github.com/nats-io/nats.go v1.51.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
 )
