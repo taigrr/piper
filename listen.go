@@ -2,12 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 )
+
+const asyncFetchWait = time.Second
+
+type messageFetcher interface {
+	Fetch(batch int, opts ...nats.PullOpt) ([]*nats.Msg, error)
+}
 
 // Listener waits for a message on a named pipe.
 type Listener struct {
@@ -56,16 +63,16 @@ func (l *Listener) Listen(ctx context.Context) error {
 				return
 			}
 
-			log.Debugf("Fetching 1 message from JetStream")
-			msgs, fetchErr := sub.Fetch(1, nats.MaxWait(8760*time.Hour))
+			msg, fetchErr := waitForAsyncMessage(ctx, sub)
 			if fetchErr != nil {
+				if errors.Is(fetchErr, context.Canceled) {
+					return
+				}
 				l.errc <- fmt.Errorf("async fetch failed: %w", fetchErr)
 				return
 			}
 
-			if len(msgs) > 0 {
-				l.jsHandler(msgs[0])
-			}
+			l.jsHandler(msg)
 		}()
 
 	case l.Group:
@@ -130,4 +137,27 @@ func (l *Listener) jsHandler(m *nats.Msg) {
 
 	fmt.Print(body)
 	l.errc <- nil
+}
+
+func waitForAsyncMessage(ctx context.Context, sub messageFetcher) (*nats.Msg, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		log.Debugf("Fetching 1 message from JetStream")
+		msgs, err := sub.Fetch(1, nats.Context(ctx), nats.MaxWait(asyncFetchWait))
+		if err == nil {
+			if len(msgs) == 0 {
+				continue
+			}
+			return msgs[0], nil
+		}
+
+		if errors.Is(err, nats.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
+			continue
+		}
+
+		return nil, err
+	}
 }
