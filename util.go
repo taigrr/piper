@@ -3,14 +3,29 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 )
+
+type natsContextConfig struct {
+	URL      string `json:"url"`
+	Token    string `json:"token"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+	Creds    string `json:"creds"`
+	Nkey     string `json:"nkey"`
+	Cert     string `json:"cert"`
+	Key      string `json:"key"`
+	CA       string `json:"ca"`
+}
 
 func connect(nctx string) (*nats.Conn, error) {
 	errh := func(nc *nats.Conn, sub *nats.Subscription, err error) {
@@ -46,22 +61,34 @@ func connect(nctx string) (*nats.Conn, error) {
 		nats.ReconnectHandler(connh),
 	}
 
-	// Try NATS context file first, fall back to default URL
+	url := nats.DefaultURL
 	home, err := os.UserHomeDir()
 	if err == nil {
-		ctxFile := home + "/.config/nats/context/" + nctx + ".json"
-		if fileExist(ctxFile) {
-			log.Debugf("Using NATS context %s", nctx)
-			// nats contexts store credentials, let nats.go handle it
+		ctxFile := filepath.Join(home, ".config", "nats", "context", nctx+".json")
+		ctxConfig, ctxErr := loadContextConfig(ctxFile)
+		if ctxErr != nil {
+			return nil, ctxErr
 		}
-		credsFile := home + "/.piper.creds"
-		if fileExist(credsFile) {
-			log.Debugf("Using credentials in %s", credsFile)
-			opts = append(opts, nats.UserCredentials(credsFile))
+		if ctxConfig != nil {
+			log.Debugf("Using NATS context %s", nctx)
+			url = contextURL(ctxConfig.URL)
+			ctxOpts, optErr := contextOptions(ctxConfig)
+			if optErr != nil {
+				return nil, optErr
+			}
+			opts = append(opts, ctxOpts...)
+		}
+
+		credsFile := filepath.Join(home, ".piper.creds")
+		if ctxConfig == nil || strings.TrimSpace(ctxConfig.Creds) == "" {
+			if fileExist(credsFile) {
+				log.Debugf("Using credentials in %s", credsFile)
+				opts = append(opts, nats.UserCredentials(credsFile))
+			}
 		}
 	}
 
-	nc, err := nats.Connect(nats.DefaultURL, opts...)
+	nc, err := nats.Connect(url, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +96,70 @@ func connect(nctx string) (*nats.Conn, error) {
 	log.Debugf("Connected to %s", nc.ConnectedUrl())
 
 	return nc, err
+}
+
+func loadContextConfig(path string) (*natsContextConfig, error) {
+	if !fileExist(path) {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not read NATS context %s: %w", path, err)
+	}
+
+	var cfg natsContextConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("could not parse NATS context %s: %w", path, err)
+	}
+
+	return &cfg, nil
+}
+
+func contextURL(url string) string {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nats.DefaultURL
+	}
+	return url
+}
+
+func contextOptions(cfg *natsContextConfig) ([]nats.Option, error) {
+	var opts []nats.Option
+	if cfg == nil {
+		return opts, nil
+	}
+
+	if creds := strings.TrimSpace(cfg.Creds); creds != "" {
+		opts = append(opts, nats.UserCredentials(creds))
+	}
+	if token := strings.TrimSpace(cfg.Token); token != "" {
+		opts = append(opts, nats.Token(token))
+	}
+	if user := strings.TrimSpace(cfg.User); user != "" {
+		opts = append(opts, nats.UserInfo(user, cfg.Password))
+	}
+	if nkey := strings.TrimSpace(cfg.Nkey); nkey != "" {
+		opt, err := nats.NkeyOptionFromSeed(nkey)
+		if err != nil {
+			return nil, fmt.Errorf("could not configure NKey from %s: %w", nkey, err)
+		}
+		opts = append(opts, opt)
+	}
+	if cert := strings.TrimSpace(cfg.Cert); cert != "" {
+		key := strings.TrimSpace(cfg.Key)
+		ca := strings.TrimSpace(cfg.CA)
+		if key != "" {
+			opts = append(opts, nats.ClientCert(cert, key))
+		}
+		if ca != "" {
+			opts = append(opts, nats.RootCAs(ca))
+		}
+	} else if ca := strings.TrimSpace(cfg.CA); ca != "" {
+		opts = append(opts, nats.RootCAs(ca))
+	}
+
+	return opts, nil
 }
 
 func fileExist(f string) bool {
@@ -82,6 +173,7 @@ func decompress(data []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer zr.Close()
 
 	d, err := io.ReadAll(zr)
 	if err != nil {
