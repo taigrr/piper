@@ -22,11 +22,6 @@ var (
 )
 
 func main() {
-	async = boolEnv("PIPER_ASYNC", false)
-	debug = boolEnv("PIPER_DEBUG", false)
-	nctx = stringEnv("PIPER_CONTEXT", "piper")
-	timeout = stringEnv("PIPER_TIMEOUT", "")
-
 	rootCmd := &cobra.Command{
 		Use:   "piper",
 		Short: "Network pipes using NATS",
