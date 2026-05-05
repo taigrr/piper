@@ -211,43 +211,6 @@ func TestParseDurationEdgeCases(t *testing.T) {
 	}
 }
 
-func TestStringEnv(t *testing.T) {
-	t.Setenv("PIPER_TEST_STRING", " configured ")
-	if got := stringEnv("PIPER_TEST_STRING", "fallback"); got != "configured" {
-		t.Fatalf("stringEnv() = %q, want %q", got, "configured")
-	}
-
-	t.Setenv("PIPER_TEST_STRING", "   ")
-	if got := stringEnv("PIPER_TEST_STRING", "fallback"); got != "fallback" {
-		t.Fatalf("stringEnv() blank = %q, want %q", got, "fallback")
-	}
-
-	if got := stringEnv("PIPER_TEST_STRING_MISSING", "fallback"); got != "fallback" {
-		t.Fatalf("stringEnv() missing = %q, want %q", got, "fallback")
-	}
-}
-
-func TestBoolEnv(t *testing.T) {
-	t.Setenv("PIPER_TEST_BOOL", "true")
-	if !boolEnv("PIPER_TEST_BOOL", false) {
-		t.Fatal("boolEnv(true) = false, want true")
-	}
-
-	t.Setenv("PIPER_TEST_BOOL", "0")
-	if boolEnv("PIPER_TEST_BOOL", true) {
-		t.Fatal("boolEnv(0) = true, want false")
-	}
-
-	t.Setenv("PIPER_TEST_BOOL", "maybe")
-	if !boolEnv("PIPER_TEST_BOOL", true) {
-		t.Fatal("boolEnv(invalid) should fall back to true")
-	}
-
-	if boolEnv("PIPER_TEST_BOOL_MISSING", false) {
-		t.Fatal("boolEnv(missing) should fall back to false")
-	}
-}
-
 func TestAsyncSyncNameConsistency(t *testing.T) {
 	// Async names should have ASYNC prefix, sync should not
 	name := "test-pipe"
