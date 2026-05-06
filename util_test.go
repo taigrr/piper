@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -100,27 +99,6 @@ func TestSyncName(t *testing.T) {
 	}
 }
 
-func TestParseDuration(t *testing.T) {
-	tests := []struct {
-		input string
-		want  time.Duration
-	}{
-		{"", 0},
-		{"invalid", 0},
-		{"30s", 30 * time.Second},
-		{"5m", 5 * time.Minute},
-		{"1h30m", time.Hour + 30*time.Minute},
-		{"100ms", 100 * time.Millisecond},
-	}
-
-	for _, tt := range tests {
-		got := parseDuration(tt.input)
-		if got != tt.want {
-			t.Errorf("parseDuration(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
-
 func TestGetVersion(t *testing.T) {
 	// With default "dev" version, should return build info or "development"
 	v := getVersion()
@@ -190,26 +168,6 @@ func TestFileExistDirectory(t *testing.T) {
 	dir := t.TempDir()
 	if !fileExist(dir) {
 		t.Errorf("fileExist(%q): expected true for existing directory", dir)
-	}
-}
-
-func TestParseDurationEdgeCases(t *testing.T) {
-	tests := []struct {
-		input string
-		want  time.Duration
-	}{
-		{"0s", 0},
-		{"0m", 0},
-		{"24h", 24 * time.Hour},
-		{"1h1m1s", time.Hour + time.Minute + time.Second},
-		{"-5s", -5 * time.Second},
-	}
-
-	for _, tt := range tests {
-		got := parseDuration(tt.input)
-		if got != tt.want {
-			t.Errorf("parseDuration(%q) = %v, want %v", tt.input, got, tt.want)
-		}
 	}
 }
 

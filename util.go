@@ -252,14 +252,3 @@ func asyncName(s string) string {
 func syncName(s string) string {
 	return "piper." + s
 }
-
-func parseDuration(s string) time.Duration {
-	if s == "" {
-		return 0
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return 0
-	}
-	return d
-}

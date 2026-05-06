@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	rd "runtime/debug"
+	"time"
 
 	"github.com/charmbracelet/fang"
 	log "github.com/sirupsen/logrus"
@@ -16,7 +17,7 @@ var (
 	debug   bool
 	async   bool
 	nctx    string
-	timeout string
+	timeout time.Duration
 
 	version = "dev"
 )
@@ -38,7 +39,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&nctx, "context", "piper", "NATS context to use for connection")
 	rootCmd.PersistentFlags().BoolVarP(&async, "async", "a", false, "Operate asynchronously using JetStream work queues")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging")
-	rootCmd.PersistentFlags().StringVar(&timeout, "timeout", "", "How long to wait before giving up (e.g. 30s, 5m)")
+	rootCmd.PersistentFlags().DurationVar(&timeout, "timeout", 0, "How long to wait before giving up (e.g. 30s, 5m)")
 
 	listenCmd := &cobra.Command{
 		Use:   "listen <name>",
@@ -107,7 +108,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 		Name:    args[0],
 		Context: nctx,
 		Message: msg,
-		Timeout: parseDuration(timeout),
+		Timeout: timeout,
 		Subject: sub,
 	}
 
