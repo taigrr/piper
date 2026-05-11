@@ -113,7 +113,45 @@ func loadContextConfig(path string) (*natsContextConfig, error) {
 		return nil, fmt.Errorf("could not parse NATS context %s: %w", path, err)
 	}
 
+	cfg.resolvePaths(filepath.Dir(path))
+
 	return &cfg, nil
+}
+
+func (cfg *natsContextConfig) resolvePaths(baseDir string) {
+	if cfg == nil {
+		return
+	}
+
+	cfg.Creds = resolvePath(baseDir, cfg.Creds)
+	cfg.Nkey = resolvePath(baseDir, cfg.Nkey)
+	cfg.Cert = resolvePath(baseDir, cfg.Cert)
+	cfg.Key = resolvePath(baseDir, cfg.Key)
+	cfg.CA = resolvePath(baseDir, cfg.CA)
+}
+
+func resolvePath(baseDir, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+
+	if filepath.IsAbs(path) {
+		return path
+	}
+
+	if baseDir == "" {
+		return path
+	}
+
+	return filepath.Join(baseDir, path)
 }
 
 func contextURL(url string) string {
