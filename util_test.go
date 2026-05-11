@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -393,4 +396,32 @@ func TestAsyncSyncNameConsistency(t *testing.T) {
 	if syncN != "piper.test-pipe" {
 		t.Errorf("syncName unexpected: %s", syncN)
 	}
+}
+
+type errReader struct{}
+
+func (errReader) Read(_ []byte) (int, error) {
+	return 0, errors.New("boom")
+}
+
+func TestReadMessage(t *testing.T) {
+	t.Run("reads full input", func(t *testing.T) {
+		input := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 400)
+
+		got, err := readMessage(bytes.NewBufferString(input))
+		if err != nil {
+			t.Fatalf("readMessage: unexpected error: %v", err)
+		}
+
+		if got != input {
+			t.Fatalf("readMessage mismatch: got %d bytes, want %d", len(got), len(input))
+		}
+	})
+
+	t.Run("propagates reader errors", func(t *testing.T) {
+		_, err := readMessage(errReader{})
+		if err == nil {
+			t.Fatal("readMessage: expected error, got nil")
+		}
+	})
 }

@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -50,13 +50,11 @@ func (n *Notifier) Notify(ctx context.Context) error {
 	}
 
 	if n.Message == "" {
-		reader := bufio.NewReader(os.Stdin)
-		text := make([]byte, reader.Size())
-		nr, err := reader.Read(text)
+		message, err := readMessage(os.Stdin)
 		if err != nil {
 			return fmt.Errorf("could not read STDIN: %w", err)
 		}
-		n.Message = string(text[:nr])
+		n.Message = message
 	}
 
 	compressed, err := compress(n.Message)
@@ -85,4 +83,13 @@ func (n *Notifier) Notify(ctx context.Context) error {
 			return fmt.Errorf("timeout after %v", n.Timeout)
 		}
 	}
+}
+
+func readMessage(reader io.Reader) (string, error) {
+	text, err := io.ReadAll(reader)
+	if err != nil {
+		return "", err
+	}
+
+	return string(text), nil
 }
