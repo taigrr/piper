@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/fang"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/taigrr/jety"
 )
 
 var (
@@ -22,6 +23,17 @@ var (
 )
 
 func main() {
+	cfg := jety.NewConfigManager().WithEnvPrefix("PIPER_")
+	cfg.SetDefault("async", false)
+	cfg.SetDefault("debug", false)
+	cfg.SetDefault("context", "piper")
+	cfg.SetDefault("timeout", "")
+
+	async = cfg.GetBool("async")
+	debug = cfg.GetBool("debug")
+	nctx = cfg.GetString("context")
+	timeout = cfg.GetString("timeout")
+
 	rootCmd := &cobra.Command{
 		Use:   "piper",
 		Short: "Network pipes using NATS",
@@ -35,10 +47,10 @@ func main() {
 		Version: getVersion(),
 	}
 
-	rootCmd.PersistentFlags().StringVar(&nctx, "context", "piper", "NATS context to use for connection")
-	rootCmd.PersistentFlags().BoolVarP(&async, "async", "a", false, "Operate asynchronously using JetStream work queues")
-	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging")
-	rootCmd.PersistentFlags().StringVar(&timeout, "timeout", "", "How long to wait before giving up (e.g. 30s, 5m)")
+	rootCmd.PersistentFlags().StringVar(&nctx, "context", cfg.GetString("context"), "NATS context to use for connection")
+	rootCmd.PersistentFlags().BoolVarP(&async, "async", "a", cfg.GetBool("async"), "Operate asynchronously using JetStream work queues")
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", cfg.GetBool("debug"), "Enable debug logging")
+	rootCmd.PersistentFlags().StringVar(&timeout, "timeout", cfg.GetString("timeout"), "How long to wait before giving up (e.g. 30s, 5m)")
 
 	listenCmd := &cobra.Command{
 		Use:   "listen <name>",
