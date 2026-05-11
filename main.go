@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	rd "runtime/debug"
+	"time"
 
 	"github.com/charmbracelet/fang"
 	log "github.com/sirupsen/logrus"
@@ -17,7 +18,7 @@ var (
 	debug   bool
 	async   bool
 	nctx    string
-	timeout string
+	timeout time.Duration
 
 	version = "dev"
 )
@@ -32,7 +33,13 @@ func main() {
 	async = cfg.GetBool("async")
 	debug = cfg.GetBool("debug")
 	nctx = cfg.GetString("context")
-	timeout = cfg.GetString("timeout")
+	if s := cfg.GetString("timeout"); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			log.Fatalf("invalid PIPER_TIMEOUT value %q: %v", s, err)
+		}
+		timeout = d
+	}
 
 	rootCmd := &cobra.Command{
 		Use:   "piper",
@@ -47,10 +54,10 @@ func main() {
 		Version: getVersion(),
 	}
 
-	rootCmd.PersistentFlags().StringVar(&nctx, "context", cfg.GetString("context"), "NATS context to use for connection")
-	rootCmd.PersistentFlags().BoolVarP(&async, "async", "a", cfg.GetBool("async"), "Operate asynchronously using JetStream work queues")
-	rootCmd.PersistentFlags().BoolVar(&debug, "debug", cfg.GetBool("debug"), "Enable debug logging")
-	rootCmd.PersistentFlags().StringVar(&timeout, "timeout", cfg.GetString("timeout"), "How long to wait before giving up (e.g. 30s, 5m)")
+	rootCmd.PersistentFlags().StringVar(&nctx, "context", nctx, "NATS context to use for connection")
+	rootCmd.PersistentFlags().BoolVarP(&async, "async", "a", async, "Operate asynchronously using JetStream work queues")
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", debug, "Enable debug logging")
+	rootCmd.PersistentFlags().DurationVar(&timeout, "timeout", timeout, "How long to wait before giving up (e.g. 30s, 5m)")
 
 	listenCmd := &cobra.Command{
 		Use:   "listen <name>",
@@ -119,7 +126,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 		Name:    args[0],
 		Context: nctx,
 		Message: msg,
-		Timeout: parseDuration(timeout),
+		Timeout: timeout,
 		Subject: sub,
 	}
 
