@@ -242,6 +242,52 @@ func TestLoadContextConfig(t *testing.T) {
 	}
 }
 
+func TestLoadContextConfigResolvesRelativePaths(t *testing.T) {
+	ctxDir := filepath.Join(t.TempDir(), "context")
+	if err := os.MkdirAll(ctxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path := filepath.Join(ctxDir, "piper.json")
+	content := `{
+		"creds": "creds/piper.creds",
+		"nkey": "./keys/piper.nk",
+		"cert": "~/certs/client.crt",
+		"key": "tls/client.key",
+		"ca": "tls/ca.pem"
+	}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadContextConfig(path)
+	if err != nil {
+		t.Fatalf("loadContextConfig() unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("loadContextConfig() returned nil config")
+	}
+
+	if got, want := cfg.Creds, filepath.Join(ctxDir, "creds", "piper.creds"); got != want {
+		t.Fatalf("cfg.Creds = %q, want %q", got, want)
+	}
+	if got, want := cfg.Nkey, filepath.Join(ctxDir, "keys", "piper.nk"); got != want {
+		t.Fatalf("cfg.Nkey = %q, want %q", got, want)
+	}
+	if got, want := cfg.Cert, filepath.Join(home, "certs", "client.crt"); got != want {
+		t.Fatalf("cfg.Cert = %q, want %q", got, want)
+	}
+	if got, want := cfg.Key, filepath.Join(ctxDir, "tls", "client.key"); got != want {
+		t.Fatalf("cfg.Key = %q, want %q", got, want)
+	}
+	if got, want := cfg.CA, filepath.Join(ctxDir, "tls", "ca.pem"); got != want {
+		t.Fatalf("cfg.CA = %q, want %q", got, want)
+	}
+}
+
 func TestLoadContextConfigMissing(t *testing.T) {
 	cfg, err := loadContextConfig(filepath.Join(t.TempDir(), "missing.json"))
 	if err != nil {
@@ -264,6 +310,26 @@ func TestLoadContextConfigInvalid(t *testing.T) {
 	}
 	if cfg != nil {
 		t.Fatalf("loadContextConfig() invalid = %#v, want nil", cfg)
+	}
+}
+
+func TestResolvePath(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "context")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if got, want := resolvePath(baseDir, "relative/file.txt"), filepath.Join(baseDir, "relative", "file.txt"); got != want {
+		t.Fatalf("resolvePath(relative) = %q, want %q", got, want)
+	}
+	if got, want := resolvePath(baseDir, "~/config/file.txt"), filepath.Join(home, "config", "file.txt"); got != want {
+		t.Fatalf("resolvePath(home) = %q, want %q", got, want)
+	}
+	if got, want := resolvePath(baseDir, "/tmp/file.txt"), "/tmp/file.txt"; got != want {
+		t.Fatalf("resolvePath(abs) = %q, want %q", got, want)
 	}
 }
 
