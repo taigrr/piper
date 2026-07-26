@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 )
+
+const retryDelay = time.Second
 
 // Notifier publishes a message to a named pipe.
 type Notifier struct {
@@ -73,9 +76,9 @@ func (n *Notifier) Notify(ctx context.Context) error {
 			return nil
 		}
 
-		if err != context.Canceled && err != context.DeadlineExceeded {
+		if !requestContextDone(err) {
 			log.Errorf("notification failed, will retry in a second: %s", err)
-			time.Sleep(time.Second)
+			time.Sleep(retryDelay)
 			continue
 		}
 
@@ -83,6 +86,10 @@ func (n *Notifier) Notify(ctx context.Context) error {
 			return fmt.Errorf("timeout after %v", n.Timeout)
 		}
 	}
+}
+
+func requestContextDone(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func readMessage(reader io.Reader) (string, error) {
