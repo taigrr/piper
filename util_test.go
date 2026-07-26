@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -335,6 +336,80 @@ func TestContextOptionsInvalidNkey(t *testing.T) {
 	if err == nil {
 		t.Fatal("contextOptions() expected error for invalid nkey seed")
 	}
+}
+
+func TestShouldCreateStream(t *testing.T) {
+	t.Run("existing stream", func(t *testing.T) {
+		shouldCreate, err := shouldCreateStream(nil)
+		if err != nil {
+			t.Fatalf("shouldCreateStream(nil) error = %v", err)
+		}
+		if shouldCreate {
+			t.Fatal("shouldCreateStream(nil) = true, want false")
+		}
+	})
+
+	t.Run("missing stream", func(t *testing.T) {
+		shouldCreate, err := shouldCreateStream(fmt.Errorf("wrapped: %w", nats.ErrStreamNotFound))
+		if err != nil {
+			t.Fatalf("shouldCreateStream(not found) error = %v", err)
+		}
+		if !shouldCreate {
+			t.Fatal("shouldCreateStream(not found) = false, want true")
+		}
+	})
+
+	t.Run("lookup failure", func(t *testing.T) {
+		expected := errors.New("permission denied")
+
+		shouldCreate, err := shouldCreateStream(expected)
+		if err == nil {
+			t.Fatal("shouldCreateStream(other) expected error, got nil")
+		}
+		if shouldCreate {
+			t.Fatal("shouldCreateStream(other) = true, want false")
+		}
+		if !errors.Is(err, expected) {
+			t.Fatalf("shouldCreateStream(other) error = %v, want wrapped %v", err, expected)
+		}
+	})
+}
+
+func TestShouldCreateConsumer(t *testing.T) {
+	t.Run("existing consumer", func(t *testing.T) {
+		shouldCreate, err := shouldCreateConsumer(nil)
+		if err != nil {
+			t.Fatalf("shouldCreateConsumer(nil) error = %v", err)
+		}
+		if shouldCreate {
+			t.Fatal("shouldCreateConsumer(nil) = true, want false")
+		}
+	})
+
+	t.Run("missing consumer", func(t *testing.T) {
+		shouldCreate, err := shouldCreateConsumer(fmt.Errorf("wrapped: %w", nats.ErrConsumerNotFound))
+		if err != nil {
+			t.Fatalf("shouldCreateConsumer(not found) error = %v", err)
+		}
+		if !shouldCreate {
+			t.Fatal("shouldCreateConsumer(not found) = false, want true")
+		}
+	})
+
+	t.Run("lookup failure", func(t *testing.T) {
+		expected := errors.New("permission denied")
+
+		shouldCreate, err := shouldCreateConsumer(expected)
+		if err == nil {
+			t.Fatal("shouldCreateConsumer(other) expected error, got nil")
+		}
+		if shouldCreate {
+			t.Fatal("shouldCreateConsumer(other) = true, want false")
+		}
+		if !errors.Is(err, expected) {
+			t.Fatalf("shouldCreateConsumer(other) error = %v, want wrapped %v", err, expected)
+		}
+	})
 }
 
 func TestAsyncSyncNameConsistency(t *testing.T) {

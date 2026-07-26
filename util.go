@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -244,8 +245,12 @@ func compress(data string) ([]byte, error) {
 
 func createStream(js nats.JetStreamContext) error {
 	_, err := js.StreamInfo("PIPER")
-	if err == nil {
-		return nil // stream already exists
+	shouldCreate, err := shouldCreateStream(err)
+	if err != nil {
+		return err
+	}
+	if !shouldCreate {
+		return nil
 	}
 
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -264,7 +269,11 @@ func createStream(js nats.JetStreamContext) error {
 
 func createConsumer(name string, js nats.JetStreamContext) error {
 	_, err := js.ConsumerInfo("PIPER", name)
-	if err == nil {
+	shouldCreate, err := shouldCreateConsumer(err)
+	if err != nil {
+		return err
+	}
+	if !shouldCreate {
 		log.Debugf("Consumer %s already exists", name)
 		return nil
 	}
@@ -281,6 +290,26 @@ func createConsumer(name string, js nats.JetStreamContext) error {
 	}
 
 	return nil
+}
+
+func shouldCreateStream(err error) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	if errors.Is(err, nats.ErrStreamNotFound) {
+		return true, nil
+	}
+	return false, fmt.Errorf("could not check stream: %w", err)
+}
+
+func shouldCreateConsumer(err error) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	if errors.Is(err, nats.ErrConsumerNotFound) {
+		return true, nil
+	}
+	return false, fmt.Errorf("could not check consumer: %w", err)
 }
 
 func asyncName(s string) string {
