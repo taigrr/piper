@@ -8,10 +8,19 @@ import (
 	"os"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 )
 
 const retryDelay = time.Second
+
+type syncRequester interface {
+	RequestWithContext(ctx context.Context, subj string, data []byte) (*nats.Msg, error)
+}
+
+type asyncPublisher interface {
+	Publish(subj string, data []byte, opts ...nats.PubOpt) (*nats.PubAck, error)
+}
 
 // Notifier publishes a message to a named pipe.
 type Notifier struct {
@@ -50,6 +59,21 @@ func (n *Notifier) Notify(ctx context.Context) error {
 		if err := createConsumer(n.Name, js); err != nil {
 			return fmt.Errorf("could not create JetStream consumer: %w", err)
 		}
+
+		if n.Message == "" {
+			message, err := readMessage(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("could not read STDIN: %w", err)
+			}
+			n.Message = message
+		}
+
+		compressed, err := compress(n.Message)
+		if err != nil {
+			return fmt.Errorf("compression failed: %w", err)
+		}
+
+		return publishAsync(tctx, js, n.Subject, compressed)
 	}
 
 	if n.Message == "" {
@@ -65,11 +89,27 @@ func (n *Notifier) Notify(ctx context.Context) error {
 		return fmt.Errorf("compression failed: %w", err)
 	}
 
-	for {
-		attemptCtx, attemptCancel := context.WithTimeout(tctx, 2*time.Second)
+	return publishSync(tctx, nc, n.Subject, compressed, n.Timeout)
+}
 
-		log.Debugf("Sending %d bytes of data compressed to %d on subject %s", len(n.Message), len(compressed), n.Subject)
-		_, err = nc.RequestWithContext(attemptCtx, n.Subject, compressed)
+func publishAsync(ctx context.Context, publisher asyncPublisher, subject string, data []byte) error {
+	_, err := publisher.Publish(subject, data, nats.Context(ctx))
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("async publish failed: %w", err)
+	}
+
+	return nil
+}
+
+func publishSync(ctx context.Context, requester syncRequester, subject string, data []byte, timeout time.Duration) error {
+	for {
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, 2*time.Second)
+
+		log.Debugf("Sending %d bytes of data on subject %s", len(data), subject)
+		_, err := requester.RequestWithContext(attemptCtx, subject, data)
 		attemptCancel()
 
 		if err == nil {
@@ -78,14 +118,35 @@ func (n *Notifier) Notify(ctx context.Context) error {
 
 		if !requestContextDone(err) {
 			log.Errorf("notification failed, will retry in a second: %s", err)
-			time.Sleep(retryDelay)
+			if err := waitForRetry(ctx); err != nil {
+				return timeoutError(ctx, timeout)
+			}
 			continue
 		}
 
-		if tctx.Err() != nil {
-			return fmt.Errorf("timeout after %v", n.Timeout)
+		if ctx.Err() != nil {
+			return timeoutError(ctx, timeout)
 		}
 	}
+}
+
+func waitForRetry(ctx context.Context) error {
+	timer := time.NewTimer(retryDelay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func timeoutError(ctx context.Context, timeout time.Duration) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err()
+	}
+	return fmt.Errorf("timeout after %v", timeout)
 }
 
 func requestContextDone(err error) bool {
