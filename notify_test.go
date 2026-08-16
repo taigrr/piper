@@ -67,6 +67,22 @@ func TestPublishAsyncWrapsPublishError(t *testing.T) {
 	}
 }
 
+func TestPublishAsyncReturnsContextErrorWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	publisher := fakeAsyncPublisher{
+		publish: func(subj string, data []byte, opts ...nats.PubOpt) (*nats.PubAck, error) {
+			return nil, errors.New("publish failed after cancellation")
+		},
+	}
+
+	err := publishAsync(ctx, publisher, "piper.ASYNC.jobs", []byte("hello"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("publishAsync() error = %v, want context.Canceled", err)
+	}
+}
+
 func TestPublishSyncRetriesNonContextErrors(t *testing.T) {
 	calls := 0
 	requester := fakeSyncRequester{
@@ -106,6 +122,28 @@ func TestPublishSyncStopsRetryWhenCanceled(t *testing.T) {
 	err := publishSync(ctx, requester, "piper.jobs", []byte("hello"), time.Minute)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("publishSync() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestPublishSyncReportsTimeoutWhenDeadlineExceeded(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	requester := fakeSyncRequester{
+		request: func(ctx context.Context, subj string, data []byte) (*nats.Msg, error) {
+			return nil, errors.New("temporary")
+		},
+	}
+
+	err := publishSync(ctx, requester, "piper.jobs", []byte("hello"), 3*time.Second)
+	if err == nil {
+		t.Fatal("publishSync() expected timeout error, got nil")
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("publishSync() error = %v, did not expect context.Canceled", err)
+	}
+	if got, want := err.Error(), "timeout after 3s"; got != want {
+		t.Fatalf("publishSync() error = %q, want %q", got, want)
 	}
 }
 
