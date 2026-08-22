@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	rd "runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/fang"
@@ -15,10 +16,12 @@ import (
 )
 
 var (
-	debug   bool
-	async   bool
-	nctx    string
-	timeout time.Duration
+	debug         bool
+	async         bool
+	nctx          string
+	nctxExplicit  bool
+	envContextSet bool
+	timeout       time.Duration
 
 	version = "dev"
 )
@@ -33,6 +36,9 @@ func main() {
 	async = cfg.GetBool("async")
 	debug = cfg.GetBool("debug")
 	nctx = cfg.GetString("context")
+	if v, ok := os.LookupEnv("PIPER_CONTEXT"); ok && strings.TrimSpace(v) != "" {
+		envContextSet = true
+	}
 	if s := cfg.GetString("timeout"); s != "" {
 		d, err := time.ParseDuration(s)
 		if err != nil {
@@ -93,14 +99,17 @@ func runListen(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	nctxExplicit = contextIsExplicit(cmd)
+
 	group, _ := cmd.Flags().GetBool("group")
 
 	l := &Listener{
-		Name:     args[0],
-		Group:    group,
-		Context:  nctx,
-		DataSubj: "piper." + args[0],
-		errc:     make(chan error, 1),
+		Name:            args[0],
+		Group:           group,
+		Context:         nctx,
+		ContextExplicit: nctxExplicit,
+		DataSubj:        "piper." + args[0],
+		errc:            make(chan error, 1),
 	}
 
 	return l.Listen(ctx)
@@ -109,6 +118,8 @@ func runListen(cmd *cobra.Command, args []string) error {
 func runNotify(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
+
+	nctxExplicit = contextIsExplicit(cmd)
 
 	var msg string
 	if len(args) > 1 {
@@ -123,18 +134,21 @@ func runNotify(cmd *cobra.Command, args []string) error {
 	}
 
 	n := &Notifier{
-		Name:    args[0],
-		Context: nctx,
-		Message: msg,
-		Timeout: timeout,
-		Subject: sub,
+		Name:            args[0],
+		Context:         nctx,
+		ContextExplicit: nctxExplicit,
+		Message:         msg,
+		Timeout:         timeout,
+		Subject:         sub,
 	}
 
 	return n.Notify(ctx)
 }
 
 func runSetup(cmd *cobra.Command, args []string) error {
-	nc, err := connect(nctx)
+	nctxExplicit = contextIsExplicit(cmd)
+
+	nc, err := connect(nctx, nctxExplicit)
 	if err != nil {
 		return err
 	}
@@ -151,6 +165,10 @@ func runSetup(cmd *cobra.Command, args []string) error {
 
 	log.Info("Created 'PIPER' Stream")
 	return nil
+}
+
+func contextIsExplicit(cmd *cobra.Command) bool {
+	return envContextSet || cmd.Flags().Changed("context")
 }
 
 func getVersion() string {

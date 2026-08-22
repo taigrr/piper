@@ -28,7 +28,7 @@ type natsContextConfig struct {
 	CA       string `json:"ca"`
 }
 
-func connect(nctx string) (*nats.Conn, error) {
+func connect(nctx string, explicit bool) (*nats.Conn, error) {
 	errh := func(nc *nats.Conn, sub *nats.Subscription, err error) {
 		if sub != nil {
 			log.Errorf("async error for sub [%s]: %v", sub.Subject, err)
@@ -62,32 +62,11 @@ func connect(nctx string) (*nats.Conn, error) {
 		nats.ReconnectHandler(connh),
 	}
 
-	url := nats.DefaultURL
-	home, err := os.UserHomeDir()
-	if err == nil {
-		ctxFile := filepath.Join(home, ".config", "nats", "context", nctx+".json")
-		ctxConfig, ctxErr := loadContextConfig(ctxFile)
-		if ctxErr != nil {
-			return nil, ctxErr
-		}
-		if ctxConfig != nil {
-			log.Debugf("Using NATS context %s", nctx)
-			url = contextURL(ctxConfig.URL)
-			ctxOpts, optErr := contextOptions(ctxConfig)
-			if optErr != nil {
-				return nil, optErr
-			}
-			opts = append(opts, ctxOpts...)
-		}
-
-		credsFile := filepath.Join(home, ".piper.creds")
-		if ctxConfig == nil || strings.TrimSpace(ctxConfig.Creds) == "" {
-			if fileExist(credsFile) {
-				log.Debugf("Using credentials in %s", credsFile)
-				opts = append(opts, nats.UserCredentials(credsFile))
-			}
-		}
+	url, ctxOpts, err := resolveConnectOptions(nctx, explicit)
+	if err != nil {
+		return nil, err
 	}
+	opts = append(opts, ctxOpts...)
 
 	nc, err := nats.Connect(url, opts...)
 	if err != nil {
@@ -97,6 +76,52 @@ func connect(nctx string) (*nats.Conn, error) {
 	log.Debugf("Connected to %s", nc.ConnectedUrl())
 
 	return nc, err
+}
+
+// resolveConnectOptions determines the NATS server URL and connection options
+// derived from the requested context. When explicit is true (the context was
+// requested via --context or PIPER_CONTEXT) a missing context file or an
+// unresolvable home directory is a hard error. When explicit is false it falls
+// back to the default local NATS server.
+func resolveConnectOptions(nctx string, explicit bool) (string, []nats.Option, error) {
+	url := nats.DefaultURL
+	var opts []nats.Option
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		if explicit {
+			return "", nil, fmt.Errorf("could not resolve home directory for NATS context %q: %w", nctx, err)
+		}
+		return url, opts, nil
+	}
+
+	ctxFile := filepath.Join(home, ".config", "nats", "context", nctx+".json")
+	ctxConfig, ctxErr := loadContextConfig(ctxFile)
+	if ctxErr != nil {
+		return "", nil, ctxErr
+	}
+	if ctxConfig == nil && explicit {
+		return "", nil, fmt.Errorf("NATS context %q not found at %s", nctx, ctxFile)
+	}
+	if ctxConfig != nil {
+		log.Debugf("Using NATS context %s", nctx)
+		url = contextURL(ctxConfig.URL)
+		ctxOpts, optErr := contextOptions(ctxConfig)
+		if optErr != nil {
+			return "", nil, optErr
+		}
+		opts = append(opts, ctxOpts...)
+	}
+
+	credsFile := filepath.Join(home, ".piper.creds")
+	if ctxConfig == nil || strings.TrimSpace(ctxConfig.Creds) == "" {
+		if fileExist(credsFile) {
+			log.Debugf("Using credentials in %s", credsFile)
+			opts = append(opts, nats.UserCredentials(credsFile))
+		}
+	}
+
+	return url, opts, nil
 }
 
 func loadContextConfig(path string) (*natsContextConfig, error) {

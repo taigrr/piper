@@ -18,10 +18,11 @@ type messageFetcher interface {
 
 // Listener waits for a message on a named pipe.
 type Listener struct {
-	Name     string
-	Group    bool
-	Context  string
-	DataSubj string
+	Name            string
+	Group           bool
+	Context         string
+	ContextExplicit bool
+	DataSubj        string
 
 	nc   *nats.Conn
 	errc chan error
@@ -31,7 +32,7 @@ type Listener struct {
 func (l *Listener) Listen(ctx context.Context) error {
 	var err error
 
-	l.nc, err = connect(l.Context)
+	l.nc, err = connect(l.Context, l.ContextExplicit)
 	if err != nil {
 		return fmt.Errorf("could not connect to NATS: %w", err)
 	}

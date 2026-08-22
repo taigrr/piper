@@ -24,11 +24,12 @@ type asyncPublisher interface {
 
 // Notifier publishes a message to a named pipe.
 type Notifier struct {
-	Name    string
-	Context string
-	Subject string
-	Message string
-	Timeout time.Duration
+	Name            string
+	Context         string
+	ContextExplicit bool
+	Subject         string
+	Message         string
+	Timeout         time.Duration
 }
 
 // Notify connects to NATS and publishes the message.
@@ -52,7 +53,7 @@ func (n *Notifier) Notify(ctx context.Context) error {
 		return fmt.Errorf("compression failed: %w", err)
 	}
 
-	nc, err := connect(n.Context)
+	nc, err := connect(n.Context, n.ContextExplicit)
 	if err != nil {
 		return fmt.Errorf("could not connect to NATS: %w", err)
 	}

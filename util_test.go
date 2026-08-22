@@ -338,6 +338,88 @@ func TestContextOptionsInvalidNkey(t *testing.T) {
 	}
 }
 
+func TestResolveConnectOptionsExplicitMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	_, _, err := resolveConnectOptions("does-not-exist", true)
+	if err == nil {
+		t.Fatal("resolveConnectOptions() explicit missing context expected error")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("resolveConnectOptions() error = %v, want context name in message", err)
+	}
+}
+
+func TestResolveConnectOptionsHomeUnresolvable(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	if _, err := os.UserHomeDir(); err == nil {
+		t.Skip("home directory resolvable on this platform even with empty HOME")
+	}
+
+	_, _, err := resolveConnectOptions("piper", true)
+	if err == nil {
+		t.Fatal("resolveConnectOptions() unresolvable home expected error")
+	}
+	if !strings.Contains(err.Error(), "home directory") {
+		t.Fatalf("resolveConnectOptions() error = %v, want home directory message", err)
+	}
+}
+
+func TestResolveConnectOptionsNoExplicitFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	url, opts, err := resolveConnectOptions("piper", false)
+	if err != nil {
+		t.Fatalf("resolveConnectOptions() unexpected error: %v", err)
+	}
+	if url != nats.DefaultURL {
+		t.Fatalf("resolveConnectOptions() url = %q, want %q", url, nats.DefaultURL)
+	}
+	if len(opts) != 0 {
+		t.Fatalf("resolveConnectOptions() opts = %d, want 0", len(opts))
+	}
+}
+
+func TestResolveConnectOptionsNoExplicitHomeUnresolvable(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	if _, err := os.UserHomeDir(); err == nil {
+		t.Skip("home directory resolvable on this platform even with empty HOME")
+	}
+
+	url, _, err := resolveConnectOptions("piper", false)
+	if err != nil {
+		t.Fatalf("resolveConnectOptions() unexpected error: %v", err)
+	}
+	if url != nats.DefaultURL {
+		t.Fatalf("resolveConnectOptions() url = %q, want %q", url, nats.DefaultURL)
+	}
+}
+
+func TestResolveConnectOptionsExplicitPresent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	ctxDir := filepath.Join(home, ".config", "nats", "context")
+	if err := os.MkdirAll(ctxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ctxDir, "prod.json"), []byte(`{"url":"nats://prod:4222"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	url, _, err := resolveConnectOptions("prod", true)
+	if err != nil {
+		t.Fatalf("resolveConnectOptions() unexpected error: %v", err)
+	}
+	if url != "nats://prod:4222" {
+		t.Fatalf("resolveConnectOptions() url = %q, want nats://prod:4222", url)
+	}
+}
+
 func TestShouldCreateStream(t *testing.T) {
 	t.Run("existing stream", func(t *testing.T) {
 		shouldCreate, err := shouldCreateStream(nil)

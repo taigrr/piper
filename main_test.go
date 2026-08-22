@@ -5,8 +5,45 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+func newContextCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "piper", Run: func(*cobra.Command, []string) {}}
+	cmd.Flags().String("context", "piper", "")
+	return cmd
+}
+
+func TestContextIsExplicit(t *testing.T) {
+	t.Run("flag changed", func(t *testing.T) {
+		envContextSet = false
+		cmd := newContextCmd()
+		if err := cmd.Flags().Parse([]string{"--context", "prod"}); err != nil {
+			t.Fatal(err)
+		}
+		if !contextIsExplicit(cmd) {
+			t.Fatal("contextIsExplicit() = false with --context set, want true")
+		}
+	})
+
+	t.Run("env set", func(t *testing.T) {
+		envContextSet = true
+		t.Cleanup(func() { envContextSet = false })
+		cmd := newContextCmd()
+		if !contextIsExplicit(cmd) {
+			t.Fatal("contextIsExplicit() = false with env set, want true")
+		}
+	})
+
+	t.Run("default bare", func(t *testing.T) {
+		envContextSet = false
+		cmd := newContextCmd()
+		if contextIsExplicit(cmd) {
+			t.Fatal("contextIsExplicit() = true with no flag/env, want false")
+		}
+	})
+}
 
 func TestTimeoutFlagParsesValidDuration(t *testing.T) {
 	var parsed time.Duration
