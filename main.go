@@ -158,7 +158,7 @@ func getVersion() string {
 		return version
 	}
 	mods, ok := rd.ReadBuildInfo()
-	if !ok {
+	if !ok || mods.Main.Version == "" || mods.Main.Version == "(devel)" {
 		return "development"
 	}
 	return mods.Main.Version

@@ -65,7 +65,7 @@ func (l *Listener) Listen(ctx context.Context) error {
 
 			msg, fetchErr := waitForAsyncMessage(ctx, sub)
 			if fetchErr != nil {
-				if errors.Is(fetchErr, context.Canceled) {
+				if ctx.Err() != nil || errors.Is(fetchErr, context.Canceled) {
 					return
 				}
 				l.errc <- fmt.Errorf("async fetch failed: %w", fetchErr)
@@ -108,11 +108,6 @@ func (l *Listener) ibHandler(m *nats.Msg) {
 		log.Warnf("Could not unsubscribe from data subject: %s", err)
 	}
 
-	if err := m.Respond([]byte{}); err != nil {
-		l.errc <- fmt.Errorf("acknowledgement failed: %w", err)
-		return
-	}
-
 	body, err := decompress(m.Data)
 	if err != nil {
 		l.errc <- fmt.Errorf("decompression failed: %w", err)
@@ -120,6 +115,12 @@ func (l *Listener) ibHandler(m *nats.Msg) {
 	}
 
 	fmt.Print(body)
+
+	if err := m.Respond([]byte{}); err != nil {
+		l.errc <- fmt.Errorf("acknowledgement failed: %w", err)
+		return
+	}
+
 	l.errc <- nil
 }
 
