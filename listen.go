@@ -124,18 +124,22 @@ func (l *Listener) ibHandler(m *nats.Msg) {
 }
 
 func (l *Listener) jsHandler(m *nats.Msg) {
-	if err := m.Ack(); err != nil {
-		l.errc <- fmt.Errorf("acknowledgement failed: %w", err)
-		return
-	}
-
 	body, err := decompress(m.Data)
 	if err != nil {
+		if nakErr := m.Nak(); nakErr != nil {
+			log.Warnf("Could not nak message after decompression failure: %s", nakErr)
+		}
 		l.errc <- fmt.Errorf("decompression failed: %w", err)
 		return
 	}
 
 	fmt.Print(body)
+
+	if err := m.Ack(); err != nil {
+		l.errc <- fmt.Errorf("acknowledgement failed: %w", err)
+		return
+	}
+
 	l.errc <- nil
 }
 

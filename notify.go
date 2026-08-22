@@ -39,43 +39,6 @@ func (n *Notifier) Notify(ctx context.Context) error {
 		n.Timeout = 1 * time.Hour
 	}
 
-	log.Debugf("Publishing to %s with a timeout of %v", n.Subject, n.Timeout)
-
-	tctx, cancel := context.WithTimeout(ctx, n.Timeout)
-	defer cancel()
-
-	nc, err := connect(n.Context)
-	if err != nil {
-		return fmt.Errorf("could not connect to NATS: %w", err)
-	}
-	defer nc.Close()
-
-	if async {
-		js, jsErr := nc.JetStream()
-		if jsErr != nil {
-			return fmt.Errorf("JetStream is not available: %w", jsErr)
-		}
-
-		if err := createConsumer(n.Name, js); err != nil {
-			return fmt.Errorf("could not create JetStream consumer: %w", err)
-		}
-
-		if n.Message == "" {
-			message, err := readMessage(os.Stdin)
-			if err != nil {
-				return fmt.Errorf("could not read STDIN: %w", err)
-			}
-			n.Message = message
-		}
-
-		compressed, err := compress(n.Message)
-		if err != nil {
-			return fmt.Errorf("compression failed: %w", err)
-		}
-
-		return publishAsync(tctx, js, n.Subject, compressed)
-	}
-
 	if n.Message == "" {
 		message, err := readMessage(os.Stdin)
 		if err != nil {
@@ -87,6 +50,30 @@ func (n *Notifier) Notify(ctx context.Context) error {
 	compressed, err := compress(n.Message)
 	if err != nil {
 		return fmt.Errorf("compression failed: %w", err)
+	}
+
+	nc, err := connect(n.Context)
+	if err != nil {
+		return fmt.Errorf("could not connect to NATS: %w", err)
+	}
+	defer nc.Close()
+
+	log.Debugf("Publishing to %s with a timeout of %v", n.Subject, n.Timeout)
+
+	tctx, cancel := context.WithTimeout(ctx, n.Timeout)
+	defer cancel()
+
+	if async {
+		js, jsErr := nc.JetStream()
+		if jsErr != nil {
+			return fmt.Errorf("JetStream is not available: %w", jsErr)
+		}
+
+		if err := createConsumer(n.Name, js); err != nil {
+			return fmt.Errorf("could not create JetStream consumer: %w", err)
+		}
+
+		return publishAsync(tctx, js, n.Subject, compressed)
 	}
 
 	return publishSync(tctx, nc, n.Subject, compressed, n.Timeout)

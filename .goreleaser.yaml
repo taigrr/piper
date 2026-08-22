@@ -11,6 +11,15 @@ builds:
     goarch:
       - amd64
       - arm64
+      - arm
+      - "386"
+    ignore:
+      - goos: windows
+        goarch: arm
+      - goos: darwin
+        goarch: "386"
+      - goos: darwin
+        goarch: arm
 
 archives:
   - formats: [tar.gz]
