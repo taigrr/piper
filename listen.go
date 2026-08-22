@@ -146,7 +146,7 @@ func waitForAsyncMessage(ctx context.Context, sub messageFetcher) (*nats.Msg, er
 		}
 
 		log.Debugf("Fetching 1 message from JetStream")
-		msgs, err := sub.Fetch(1, nats.Context(ctx), nats.MaxWait(asyncFetchWait))
+		msgs, err := sub.Fetch(1, nats.MaxWait(asyncFetchWait))
 		if err == nil {
 			if len(msgs) == 0 {
 				continue

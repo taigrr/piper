@@ -78,13 +78,16 @@ func TestWaitForAsyncMessageReturnsNonTimeoutErrors(t *testing.T) {
 	}
 }
 
-func TestWaitForAsyncMessagePassesContextOption(t *testing.T) {
+func TestWaitForAsyncMessagePassesOnlyMaxWait(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	fetcher := fakeFetcher{fetch: func(batch int, opts ...nats.PullOpt) ([]*nats.Msg, error) {
-		if len(opts) < 2 {
-			t.Fatalf("expected context and max wait options, got %d", len(opts))
+		// nats.go rejects Fetch when both a context and a max-wait option are
+		// set (ErrContextAndTimeout), and rejects a deadline-less context
+		// (ErrNoDeadlineContext). Only nats.MaxWait must be passed here.
+		if len(opts) != 1 {
+			t.Fatalf("expected exactly the max wait option, got %d", len(opts))
 		}
 		return nil, context.Canceled
 	}}

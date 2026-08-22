@@ -104,7 +104,7 @@ $ nats context add piper --server example.net:4222 --credentials /some/user.cred
 
 Piper will automatically use the context called `piper`, you can pass `--context` or set `PIPER_CONTEXT` to pick another.
 
-When in persistent mode data is kept for up to 24 hours or until any listener consumed it whichever comes first.
+When in persistent mode data is kept for up to 7 days or until any listener consumed it whichever comes first.
 
 ## TODO?
 

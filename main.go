@@ -100,7 +100,7 @@ func runListen(cmd *cobra.Command, args []string) error {
 		Group:    group,
 		Context:  nctx,
 		DataSubj: "piper." + args[0],
-		errc:     make(chan error),
+		errc:     make(chan error, 1),
 	}
 
 	return l.Listen(ctx)
