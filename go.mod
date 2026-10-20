@@ -1,6 +1,6 @@
 module github.com/taigrr/piper
 
-go 1.26.6
+go 1.27.3
 
 require (
 	github.com/charmbracelet/fang v1.0.0
