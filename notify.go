@@ -134,7 +134,7 @@ func timeoutError(ctx context.Context, timeout time.Duration) error {
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return ctx.Err()
 	}
-	return fmt.Errorf("timeout after %v", timeout)
+	return fmt.Errorf("timeout after %v: %w", timeout, ctx.Err())
 }
 
 func requestContextDone(err error) bool {
