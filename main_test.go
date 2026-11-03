@@ -84,3 +84,35 @@ func TestTimeoutFlagRejectsInvalidDuration(t *testing.T) {
 		t.Fatalf("Parse(invalid) error = %q, want invalid argument message", err)
 	}
 }
+
+func TestNotifyMessage(t *testing.T) {
+	t.Run("reads stdin when message is omitted", func(t *testing.T) {
+		got, provided := notifyMessage([]string{"jobs"})
+		if provided {
+			t.Fatal("notifyMessage() provided = true, want false")
+		}
+		if got != "" {
+			t.Fatalf("notifyMessage() message = %q, want empty", got)
+		}
+	})
+
+	t.Run("keeps explicit empty message", func(t *testing.T) {
+		got, provided := notifyMessage([]string{"jobs", ""})
+		if !provided {
+			t.Fatal("notifyMessage() provided = false, want true")
+		}
+		if got != "" {
+			t.Fatalf("notifyMessage() message = %q, want empty", got)
+		}
+	})
+
+	t.Run("keeps explicit message", func(t *testing.T) {
+		got, provided := notifyMessage([]string{"jobs", "done"})
+		if !provided {
+			t.Fatal("notifyMessage() provided = false, want true")
+		}
+		if got != "done" {
+			t.Fatalf("notifyMessage() message = %q, want done", got)
+		}
+	})
+}
