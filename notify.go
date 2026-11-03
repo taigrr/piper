@@ -29,6 +29,7 @@ type Notifier struct {
 	ContextExplicit bool
 	Subject         string
 	Message         string
+	MessageProvided bool
 	Timeout         time.Duration
 }
 
@@ -40,7 +41,7 @@ func (n *Notifier) Notify(ctx context.Context) error {
 		n.Timeout = 1 * time.Hour
 	}
 
-	if n.Message == "" {
+	if !n.MessageProvided {
 		message, err := readMessage(os.Stdin)
 		if err != nil {
 			return fmt.Errorf("could not read STDIN: %w", err)
@@ -134,7 +135,7 @@ func timeoutError(ctx context.Context, timeout time.Duration) error {
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return ctx.Err()
 	}
-	return fmt.Errorf("timeout after %v", timeout)
+	return fmt.Errorf("timeout after %v: %w", timeout, ctx.Err())
 }
 
 func requestContextDone(err error) bool {

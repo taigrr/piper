@@ -142,7 +142,10 @@ func TestPublishSyncReportsTimeoutWhenDeadlineExceeded(t *testing.T) {
 	if errors.Is(err, context.Canceled) {
 		t.Fatalf("publishSync() error = %v, did not expect context.Canceled", err)
 	}
-	if got, want := err.Error(), "timeout after 3s"; got != want {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("publishSync() error = %v, want wrapped deadline exceeded", err)
+	}
+	if got, want := err.Error(), "timeout after 3s: context deadline exceeded"; got != want {
 		t.Fatalf("publishSync() error = %q, want %q", got, want)
 	}
 }
@@ -165,6 +168,32 @@ func TestRequestContextDone(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := requestContextDone(tt.err); got != tt.want {
 				t.Fatalf("requestContextDone(%v) = %t, want %t", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPublishSyncPreservesContextErrors(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		name := "deadline"
+		if canceled {
+			name = "canceled"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			if canceled {
+				cancel()
+				ctx, cancel = context.WithCancel(context.Background())
+				cancel()
+			}
+			defer cancel()
+
+			requester := fakeSyncRequester{request: func(attempt context.Context, _ string, _ []byte) (*nats.Msg, error) {
+				return nil, attempt.Err()
+			}}
+			err := publishSync(ctx, requester, "piper.test", nil, time.Second)
+			if !errors.Is(err, ctx.Err()) {
+				t.Fatalf("publishSync() error = %v, want wrapped %v", err, ctx.Err())
 			}
 		})
 	}

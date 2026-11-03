@@ -121,10 +121,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 
 	nctxExplicit = contextIsExplicit(cmd)
 
-	var msg string
-	if len(args) > 1 {
-		msg = args[1]
-	}
+	msg, messageProvided := notifyMessage(args)
 
 	var sub string
 	if async {
@@ -140,9 +137,17 @@ func runNotify(cmd *cobra.Command, args []string) error {
 		Message:         msg,
 		Timeout:         timeout,
 		Subject:         sub,
+		MessageProvided: messageProvided,
 	}
 
 	return n.Notify(ctx)
+}
+
+func notifyMessage(args []string) (string, bool) {
+	if len(args) > 1 {
+		return args[1], true
+	}
+	return "", false
 }
 
 func runSetup(cmd *cobra.Command, args []string) error {
