@@ -540,3 +540,26 @@ func TestReadMessage(t *testing.T) {
 		}
 	})
 }
+
+func TestContextOptionsRejectsIncompleteClientCertificate(t *testing.T) {
+	for _, cfg := range []*natsContextConfig{
+		{Cert: "/tmp/client.crt"},
+		{Key: "/tmp/client.key"},
+		{Cert: "/tmp/client.crt", Key: "  "},
+		{Cert: "  ", Key: "/tmp/client.key"},
+	} {
+		if _, err := contextOptions(cfg); err == nil {
+			t.Errorf("contextOptions(%+v) accepted incomplete client certificate", cfg)
+		}
+	}
+}
+
+func TestContextOptionsAllowsCAWithoutClientCertificate(t *testing.T) {
+	opts, err := contextOptions(&natsContextConfig{CA: "/tmp/ca.pem"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts) != 1 {
+		t.Fatalf("got %d options, want one root CA option", len(opts))
+	}
+}

@@ -194,6 +194,12 @@ func contextOptions(cfg *natsContextConfig) ([]nats.Option, error) {
 		return opts, nil
 	}
 
+	cert := strings.TrimSpace(cfg.Cert)
+	key := strings.TrimSpace(cfg.Key)
+	if (cert == "") != (key == "") {
+		return nil, errors.New("NATS client certificate and key must both be configured")
+	}
+
 	if creds := strings.TrimSpace(cfg.Creds); creds != "" {
 		opts = append(opts, nats.UserCredentials(creds))
 	}
@@ -210,16 +216,10 @@ func contextOptions(cfg *natsContextConfig) ([]nats.Option, error) {
 		}
 		opts = append(opts, opt)
 	}
-	if cert := strings.TrimSpace(cfg.Cert); cert != "" {
-		key := strings.TrimSpace(cfg.Key)
-		ca := strings.TrimSpace(cfg.CA)
-		if key != "" {
-			opts = append(opts, nats.ClientCert(cert, key))
-		}
-		if ca != "" {
-			opts = append(opts, nats.RootCAs(ca))
-		}
-	} else if ca := strings.TrimSpace(cfg.CA); ca != "" {
+	if cert != "" {
+		opts = append(opts, nats.ClientCert(cert, key))
+	}
+	if ca := strings.TrimSpace(cfg.CA); ca != "" {
 		opts = append(opts, nats.RootCAs(ca))
 	}
 

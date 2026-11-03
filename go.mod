@@ -1,6 +1,6 @@
 module github.com/taigrr/piper
 
-go 1.26.6
+go 1.27.3
 
 toolchain go1.27.3
 
