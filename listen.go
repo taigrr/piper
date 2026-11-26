@@ -153,6 +153,11 @@ func waitForAsyncMessage(ctx context.Context, sub messageFetcher) (*nats.Msg, er
 
 		log.Debugf("Fetching 1 message from JetStream")
 		msgs, err := sub.Fetch(1, nats.MaxWait(asyncFetchWait))
+		// Fetch can complete after cancellation; leave late messages unacked
+		// for redelivery instead of passing them to the handler.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		if err == nil {
 			if len(msgs) == 0 {
 				continue

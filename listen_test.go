@@ -97,3 +97,20 @@ func TestWaitForAsyncMessagePassesOnlyMaxWait(t *testing.T) {
 		t.Fatalf("waitForAsyncMessage error = %v, want context.Canceled", err)
 	}
 }
+
+func TestWaitForAsyncMessageDiscardsMessageAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fetcher := fakeFetcher{fetch: func(batch int, opts ...nats.PullOpt) ([]*nats.Msg, error) {
+		cancel()
+		return []*nats.Msg{{Data: []byte("late message")}}, nil
+	}}
+
+	msg, err := waitForAsyncMessage(ctx, fetcher)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if msg != nil {
+		t.Fatal("canceled fetch returned a message for processing")
+	}
+}
